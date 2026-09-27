@@ -23,6 +23,8 @@ sentence-transformers>=3.0.0
 langchain-huggingface>=0.0.3
 huggingface-hub>=0.23.0
 tiktoken>=0.7.0
+langchain-chroma>=0.1.0
+langchain-text-splitters>=0.2.0
 
 # ── Streamlit ────────────────────────────────────────────────
 streamlit>=1.35.0

@@ -4,7 +4,7 @@ Turn any YouTube video or local recording into a searchable, chattable knowledge
 link or a file path, and get back a title, a summary, action items, key decisions, open
 questions — and a chat interface grounded in the actual transcript via RAG.
 
-![Summary and transcript view](screenshots/summary-and-transcript.png)
+![Input workspace](screenshots/hero-input.png)
 
 ## Features
 
@@ -21,8 +21,8 @@ questions — and a chat interface grounded in the actual transcript via RAG.
   interactive chat loop
 - 🎨 Fully custom dark "terminal" UI theme built on top of Streamlit
 
-![Insights and chat view](screenshots/insights-and-chat.png)
-
+![Results workspace](screenshots/results-workspace.png)
+![Ask your meeting](screenshots/ask-your-meeting.png)
 ## Architecture
 
 ```

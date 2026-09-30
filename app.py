@@ -14,6 +14,8 @@ import json
 import os
 import re
 import tempfile
+import threading
+import time
 from datetime import datetime
 
 import streamlit as st
@@ -21,6 +23,7 @@ import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from fpdf import FPDF
 from pydub import AudioSegment
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 from utils.audio_processor import process_input
 from core.transcriber import transcribe_all
@@ -37,6 +40,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+GITHUB_URL = "https://github.com/Saaksshi18/ai-rag-video-assistant"
 SUPPORTED_UPLOAD_TYPES = ["mp4", "mp3", "wav", "m4a"]
 SUGGESTED_QUESTIONS = [
     "What decisions were made?",
@@ -44,6 +48,23 @@ SUGGESTED_QUESTIONS = [
     "When is the project deadline?",
     "What concerns were raised?",
     "Summarise the deployment discussion.",
+]
+WAITING_MESSAGES = [
+    "Something's cooking \u2014 good results take a moment \U0001f373",
+    "Please wait, patience gives fruitful results \U0001f331",
+    "Listening closely so nothing gets missed \U0001f3a7",
+    "Reading between the lines of your transcript \U0001f4dd",
+    "No, it hasn't frozen \u2014 it's genuinely thinking \U0001f916",
+    "Good things come to those who let the model work \u2728",
+    "Almost there \u2014 stitching the pieces together \U0001f9f5",
+]
+PIPELINE_STEPS = [
+    ("audio", "Audio processing"),
+    ("transcript", "Transcription"),
+    ("title", "Title generation"),
+    ("summary", "Summarisation"),
+    ("extract", "Extraction"),
+    ("rag", "RAG engine"),
 ]
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -61,14 +82,15 @@ def inject_css():
         --surface-3: #202127;
         --border: #26272e;
         --border-soft: #1d1e24;
-        --accent: #7c6ef2;
-        --accent-soft: rgba(124, 110, 242, 0.14);
+        --accent: #5fe3a0;
+        --accent-soft: rgba(95, 227, 160, 0.13);
         --accent-2: #4fb8c9;
         --accent-2-soft: rgba(79, 184, 201, 0.14);
         --text: #eeeeec;
         --text-muted: #96969f;
         --text-faint: #5c5c66;
-        --success: #4caf82;
+        --success: #5fe3a0;
+        --warning: #e0b85c;
         --radius: 10px;
     }
 
@@ -93,10 +115,36 @@ def inject_css():
         border-radius: 8px !important;
         color: var(--text) !important;
     }
-    .stTextInput > div > div > input:focus {
-        border-color: var(--accent) !important;
-        box-shadow: 0 0 0 3px var(--accent-soft) !important;
-    }
+    /* Outer BaseWeb wrapper = the ONLY thing that draws the border */
+.stTextInput div[data-baseweb="input"],
+.stTextInput div[data-baseweb="base-input"] {
+    background: var(--surface-2) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+/* Green outline on focus, drawn once on the wrapper */
+.stTextInput div[data-baseweb="input"]:focus-within,
+.stTextInput div[data-baseweb="base-input"]:focus-within {
+    border: 1px solid var(--accent) !important;
+    box-shadow: none !important;
+}
+
+/* Inner <input> = no border/outline of its own */
+.stTextInput input {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    color: var(--text) !important;
+}
+.stTextInput input:focus {
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
 
     .stButton > button {
         background: var(--surface-2);
@@ -109,8 +157,8 @@ def inject_css():
     }
     .stButton > button:hover { border-color: var(--accent); background: var(--surface-3); }
     .stButton > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-    button[kind="primary"] { background: var(--accent) !important; border: 1px solid var(--accent) !important; color: #fff !important; }
-    button[kind="primary"]:hover { background: #6f61e8 !important; border-color: #6f61e8 !important; }
+    button[kind="primary"] { background: var(--accent) !important; border: 1px solid var(--accent) !important; color: #06110b !important; font-weight: 600 !important; }
+    button[kind="primary"]:hover { background: #7ce9b3 !important; border-color: #7ce9b3 !important; }
 
     div[role="radiogroup"] {
         display: inline-flex; gap: 0.2rem;
@@ -128,7 +176,7 @@ def inject_css():
     hr { border-top: 1px solid var(--border-soft) !important; margin: 1.25rem 0 !important; }
 
     .eyebrow { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent-2); margin-bottom: 0.4rem; }
-    .hero-h1 { font-size: clamp(1.7rem, 3.4vw, 2.4rem); font-weight: 700; line-height: 1.18; color: var(--text); margin: 0 0 0.5rem 0; }
+    .hero-h1 {font-size: 3.2rem !important; font-weight: 700; line-height: 1.18; color: var(--text); margin: 0 0 0.5rem 0; }
     .hero-sub { color: var(--text-muted); font-size: 0.95rem; max-width: 34rem; line-height: 1.55; }
 
     .surface-panel { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 1.1rem 1.3rem; }
@@ -151,9 +199,82 @@ def inject_css():
 
     mark { background: var(--accent-soft); color: var(--text); padding: 0 2px; border-radius: 3px; }
 
+    /* ── Top header bar ── */
+    .topbar {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0.9rem 0 1.1rem 0; border-bottom: 1px solid var(--border-soft);
+        margin-bottom: 1.6rem;
+    }
+    .topbar-brand { display: flex; align-items: center; gap: 0.6rem; }
+    .topbar-logo {
+        width: 30px; height: 30px; border-radius: 8px;
+        background: var(--accent); color: #06110b;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 800; font-size: 0.95rem;
+    }
+    .topbar-title { font-size: 1.02rem; font-weight: 700; color: var(--text); }
+    .topbar-link {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 0.4rem 0.85rem; font-size: 0.82rem; font-weight: 500;
+        color: var(--text); text-decoration: none !important;
+        transition: border-color 0.15s ease;
+    }
+    .topbar-link:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Pipeline checklist ── */
+    .pl-row { display: flex; align-items: center; gap: 0.65rem; padding: 0.5rem 0; font-size: 0.88rem; }
+    .pl-icon { width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; }
+    .pl-done .pl-icon { color: var(--success); }
+    .pl-active .pl-icon { color: var(--accent); animation: spin 0.9s linear infinite; }
+    .pl-pending .pl-icon { color: var(--text-faint); }
+    .pl-done .pl-label { color: var(--text-muted); }
+    .pl-active .pl-label { color: var(--text); font-weight: 600; }
+    .pl-pending .pl-label { color: var(--text-faint); }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    .wait-line {
+        font-size: 0.82rem; color: var(--text-muted);
+        margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px dashed var(--border-soft);
+    }
+    .wait-timer { font-family: 'IBM Plex Mono', monospace; color: var(--accent); font-weight: 600; }
+
+    /* ── Skeleton shimmer for "still generating" placeholders ── */
+    .skeleton-bar {
+        height: 10px; border-radius: 4px; margin: 8px 0;
+        background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 37%, var(--surface-2) 63%);
+        background-size: 400% 100%;
+        animation: shimmer 1.6s ease infinite;
+    }
+    @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+    /* ── Fade-in ── */
+    .fade-in { animation: fadeIn 0.4s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ── Output table (action items) ── */
+    .out-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+    .out-table th {
+        text-align: left; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--text-faint); font-weight: 600; padding: 0 0 0.5rem 0; border-bottom: 1px solid var(--border-soft);
+    }
+    .out-table td { padding: 0.55rem 0.6rem 0.55rem 0; border-bottom: 1px solid var(--border-soft); color: var(--text-muted); vertical-align: top; }
+    .out-table tr:last-child td { border-bottom: none; }
+    .out-table td.out-task { color: var(--text); }
+    .out-table td.out-due { font-family: 'IBM Plex Mono', monospace; color: var(--accent-2); white-space: nowrap; }
+
+    .bullet-list { list-style: none; margin: 0; padding: 0; }
+    .bullet-list li { display: flex; gap: 0.55rem; padding: 0.5rem 0; font-size: 0.85rem; color: var(--text-muted); border-bottom: 1px solid var(--border-soft); }
+    .bullet-list li:last-child { border-bottom: none; }
+    .bullet-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 0.4rem; flex-shrink: 0; }
+    .bullet-dot.amber { background: var(--warning); }
+
+    .meta-line { font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; color: var(--text-faint); margin-top: 0.3rem; }
+
     @media (max-width: 640px) {
         .hero-h1 { font-size: 1.5rem; }
         .surface-panel { padding: 0.9rem; }
+        .topbar { flex-wrap: wrap; gap: 0.6rem; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -174,6 +295,43 @@ def format_duration(total_seconds) -> str:
     if m:
         return f"{m}m {s}s"
     return f"{s}s"
+
+
+class LiveTimer:
+    """Ticks a placeholder with elapsed time + a rotating reassuring message
+    while the pipeline runs, so a multi-minute analysis never looks stalled.
+    Runs in a background thread attached to Streamlit's script context;
+    always stopped in a `finally` block by the caller."""
+
+    def __init__(self, placeholder):
+        self.placeholder = placeholder
+        self.start = time.time()
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        ctx = get_script_run_ctx()
+        if ctx is not None:
+            add_script_run_ctx(self._thread, ctx)
+
+    def start_timer(self):
+        self._thread.start()
+
+    def _run(self):
+        while not self._stop_event.is_set():
+            elapsed = int(time.time() - self.start)
+            msg = WAITING_MESSAGES[(elapsed // 4) % len(WAITING_MESSAGES)]
+            try:
+                self.placeholder.markdown(
+                    f'<div class="wait-line">\u23f1\ufe0f <span class="wait-timer">{format_duration(elapsed) if elapsed >= 60 else f"{elapsed}s"}</span>'
+                    f' &nbsp;\u2014&nbsp; {msg}</div>',
+                    unsafe_allow_html=True,
+                )
+            except Exception:
+                pass
+            self._stop_event.wait(1)
+
+    def stop(self):
+        self._stop_event.set()
+        self._thread.join(timeout=2)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -330,13 +488,28 @@ def render_sidebar():
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Top header bar
+# ─────────────────────────────────────────────────────────────────────────
+def render_top_header():
+    st.markdown(
+        f"""<div class="topbar fade-in">
+            <div class="topbar-brand">
+                <div class="topbar-title"></div>
+            </div>
+            <a class="topbar-link" href="{GITHUB_URL}" target="_blank"> GitHub</a>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Input workspace (empty state)
 # ─────────────────────────────────────────────────────────────────────────
 def render_hero():
-    st.markdown('<div class="eyebrow">Meeting Intelligence</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-h1">Turn hours of video into useful information.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="eyebrow fade-in">Meeting Intelligence</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-h1 fade-in">Turn hours of video into useful information.</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="hero-sub">Transcribe meetings, extract decisions, and ask questions about your recordings.</div>',
+        '<div class="hero-sub fade-in">Transcribe meetings, extract decisions, and ask questions about your recordings.</div>',
         unsafe_allow_html=True,
     )
     st.write("")
@@ -372,39 +545,73 @@ def render_input_workspace():
 # ─────────────────────────────────────────────────────────────────────────
 # Pipeline execution — identical backend call order to the original app.py
 # ─────────────────────────────────────────────────────────────────────────
+def render_checklist(step_states: dict, placeholder):
+    rows = []
+    for key, label in PIPELINE_STEPS:
+        state = step_states.get(key, "pending")  # pending | active | done
+        icon = {"done": "\u2713", "active": "\u25ef", "pending": "\u25cb"}[state]
+        rows.append(f'<div class="pl-row pl-{state}"><span class="pl-icon">{icon}</span><span class="pl-label">{label}</span></div>')
+    placeholder.markdown('<div class="fade-in">' + "".join(rows) + "</div>", unsafe_allow_html=True)
+
+
 def run_pipeline(source: str, language: str):
     st.session_state.result = None
     st.session_state.chat_history = []
     start_time = datetime.now()
 
+    step_states = {key: "pending" for key, _ in PIPELINE_STEPS}
+
     try:
         with st.status("Analysing your video…", expanded=True) as status:
-            status.write("01 · Audio Processing")
-            chunks = process_input(source)
+            checklist_ph = st.empty()
+            timer_ph = st.empty()
+            render_checklist(step_states, checklist_ph)
 
-            # Real duration, computed from the chunk files audio_processor.py
-            # already produced — reads existing files, doesn't touch that module.
-            duration_seconds = 0.0
+            timer = LiveTimer(timer_ph)
+            timer.start_timer()
+
+            def mark(key, state):
+                step_states[key] = state
+                render_checklist(step_states, checklist_ph)
+
             try:
-                for c in chunks:
-                    duration_seconds += len(AudioSegment.from_wav(c)) / 1000.0
-            except Exception:
+                mark("audio", "active")
+                chunks = process_input(source)
+                mark("audio", "done")
+
+                # Real duration, computed from the chunk files audio_processor.py
+                # already produced — reads existing files, doesn't touch that module.
                 duration_seconds = 0.0
+                try:
+                    for c in chunks:
+                        duration_seconds += len(AudioSegment.from_wav(c)) / 1000.0
+                except Exception:
+                    duration_seconds = 0.0
 
-            status.write("02 · Transcription")
-            transcript = transcribe_all(chunks, language)
+                mark("transcript", "active")
+                transcript = transcribe_all(chunks, language)
+                mark("transcript", "done")
 
-            status.write("03 · Summary")
-            title = generate_title(transcript)
-            summary = summarize(transcript)
+                mark("title", "active")
+                title = generate_title(transcript)
+                mark("title", "done")
 
-            status.write("04 · Insights")
-            action_items = extract_action_items(transcript)
-            decisions = extract_key_decisions(transcript)
-            questions = extract_questions(transcript)
+                mark("summary", "active")
+                summary = summarize(transcript)
+                mark("summary", "done")
 
-            status.write("05 · RAG Indexing")
-            rag_chain = build_rag_chain(transcript)
+                mark("extract", "active")
+                action_items = extract_action_items(transcript)
+                decisions = extract_key_decisions(transcript)
+                questions = extract_questions(transcript)
+                mark("extract", "done")
+
+                mark("rag", "active")
+                rag_chain = build_rag_chain(transcript)
+                mark("rag", "done")
+            finally:
+                timer.stop()
+                timer_ph.empty()
 
             status.update(label="Analysis complete", state="complete", expanded=False)
 
@@ -440,6 +647,12 @@ def render_results_header(result: dict):
     with col1:
         st.markdown('<div class="eyebrow">Session Title</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="hero-h1" style="font-size:1.5rem">{esc(result["title"])}</div>', unsafe_allow_html=True)
+        engine_label = "Whisper" if result.get("language") == "english" else "Sarvam AI"
+        lang_label = "English" if result.get("language") == "english" else "Hinglish → English"
+        st.markdown(
+            f'<div class="meta-line">{format_duration(result.get("duration_seconds"))} \u00b7 {esc(lang_label)} \u00b7 {esc(engine_label)}</div>',
+            unsafe_allow_html=True,
+        )
     with col2:
         b1, b2, b3, b4 = st.columns(4)
         with b1:
@@ -472,19 +685,95 @@ def render_results_header(result: dict):
 def render_summary_section(result: dict):
     st.markdown('<div class="section-label">Executive Summary</div>', unsafe_allow_html=True)
     body = esc(result.get("summary", "")).replace("\n", "<br>")
-    st.markdown(f'<div class="surface-panel"><div class="divider-item-body">{body}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="surface-panel fade-in"><div class="divider-item-body">{body}</div></div>', unsafe_allow_html=True)
     st.write("")
+
+
+ACTION_ITEM_PATTERN = re.compile(
+    r"task\s*[:\-]\s*(.+?)(?=\n\s*owner\s*[:\-]|\n\s*deadline\s*[:\-]|$)"
+    r"(?:\n\s*owner\s*[:\-]\s*(.+?))?(?=\n\s*deadline\s*[:\-]|$)"
+    r"(?:\n\s*deadline\s*[:\-]\s*(.+?))?$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_action_items(text: str):
+    """Best-effort parse of 'Task / Owner / Deadline' items (the shape
+    core/extractor.py's prompt already asks for) into structured rows for a
+    real table. Returns None if fewer than half the items parse cleanly, so
+    the caller can fall back to the plain text rendering instead of showing
+    a half-empty, unconvincing table."""
+    items = split_numbered_items(text)
+    if not items or items[0].lower().startswith("no action items"):
+        return []
+    rows = []
+    parsed_count = 0
+    for item in items:
+        clean = re.sub(r"^\s*\d+[\.\)]\s*", "", item).strip()
+        m = ACTION_ITEM_PATTERN.search(clean)
+        if m and m.group(1):
+            task = m.group(1).strip().rstrip(".")
+            owner = (m.group(2) or "Not specified").strip().rstrip(".")
+            deadline = (m.group(3) or "Not specified").strip().rstrip(".")
+            rows.append({"task": task, "owner": owner, "deadline": deadline})
+            parsed_count += 1
+        else:
+            rows.append({"task": clean, "owner": "\u2014", "deadline": "\u2014"})
+    if parsed_count < max(1, len(items) // 2):
+        return None
+    return rows
+
+
+def render_action_items_table(text: str):
+    rows = parse_action_items(text)
+    if rows is None:
+        render_divider_list(text, "No action items found.")
+        return
+    if not rows:
+        st.markdown(
+            '<div class="surface-panel"><span style="color:var(--text-faint);font-size:0.85rem">No action items found.</span></div>',
+            unsafe_allow_html=True,
+        )
+        return
+    body_rows = "".join(
+        f'<tr><td class="out-task">{esc(r["task"])}</td><td>{esc(r["owner"])}</td><td class="out-due">{esc(r["deadline"])}</td></tr>'
+        for r in rows
+    )
+    st.markdown(
+        f"""<div class="surface-panel fade-in">
+            <table class="out-table">
+                <thead><tr><th>Task</th><th>Owner</th><th>Due</th></tr></thead>
+                <tbody>{body_rows}</tbody>
+            </table>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_bullet_list(text: str, empty_label: str, dot_class: str = ""):
+    items = split_numbered_items(text)
+    if not items or items[0].lower().startswith(empty_label.lower().split(" found")[0]):
+        st.markdown(f'<span style="color:var(--text-faint);font-size:0.85rem">{esc(empty_label)}</span>', unsafe_allow_html=True)
+        return
+    lis = "".join(
+        f'<li><span class="bullet-dot {dot_class}"></span><span>{esc(re.sub(r"^\\s*\\d+[.)]\\s*", "", i))}</span></li>'
+        for i in items
+    )
+    st.markdown(f'<ul class="bullet-list fade-in">{lis}</ul>', unsafe_allow_html=True)
 
 
 def render_insights_section(result: dict):
     st.markdown('<div class="section-label">Key Insights</div>', unsafe_allow_html=True)
-    tab1, tab2, tab3 = st.tabs(["Action Items", "Key Decisions", "Open Questions"])
-    with tab1:
-        render_divider_list(result.get("action_items", ""), "No action items found.")
-    with tab2:
-        render_divider_list(result.get("key_decisions", ""), "No key decisions found.")
-    with tab3:
-        render_divider_list(result.get("open_questions", ""), "No open questions found.")
+    col_left, col_right = st.columns([3, 2], gap="medium")
+    with col_left:
+        st.markdown('<div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:0.4rem">Action Items</div>', unsafe_allow_html=True)
+        render_action_items_table(result.get("action_items", ""))
+    with col_right:
+        st.markdown('<div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:0.4rem">Key Decisions</div>', unsafe_allow_html=True)
+        render_bullet_list(result.get("key_decisions", ""), "No key decisions found.")
+        st.write("")
+        st.markdown('<div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:0.4rem">Open Questions</div>', unsafe_allow_html=True)
+        render_bullet_list(result.get("open_questions", ""), "No open questions found.", dot_class="amber")
     st.write("")
 
 
@@ -580,6 +869,7 @@ def render_chat_section(result: dict):
 # ─────────────────────────────────────────────────────────────────────────
 inject_css()
 render_sidebar()
+render_top_header()
 
 if st.session_state.result:
     _result = st.session_state.result

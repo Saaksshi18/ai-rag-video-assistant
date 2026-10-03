@@ -7,42 +7,55 @@ os.makedirs(DOWNLOAD_DIR,exist_ok = True)
 
 def download_youtube_audio(url :str) ->str:
     output_path = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": output_path,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "wav",
-                "preferredquality": "192",
-            }
-        ],
-        "quiet": True,
-        # YouTube increasingly returns HTTP 403 for requests from cloud/
-        # datacenter IP ranges (the kind most hosting platforms use) when
-        # yt-dlp identifies itself with its default web-client signature.
-        # Impersonating an Android client and retrying transient failures
-        # is the standard, widely-used yt-dlp workaround for this — it asks
-        # YouTube for a differently-signed stream that isn't gated the same
-        # way, with no change to what gets downloaded.
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
-        "http_headers": {"User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 14)"},
-        "retries": 5,
-        "fragment_retries": 5,
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info).replace(".webm", ".wav").replace(".m4a", ".wav")
-        return filename
-    except yt_dlp.utils.DownloadError as e:
-        if "403" in str(e) or "Forbidden" in str(e):
-            raise RuntimeError(
-                "YouTube blocked this server's download request (HTTP 403). This is a "
-                "temporary IP-level block on YouTube's side, not a problem with the link — "
-                "wait a bit and try again, or upload the video/audio file directly instead."
-            ) from e
-        raise
+
+    # YouTube's IP-based blocking of cloud/datacenter traffic targets some
+    # yt-dlp "player client" identities more aggressively than others, and
+    # which one is currently blocked shifts over time as YouTube adjusts
+    # its detection. Betting on a single client (as the previous version
+    # of this function did) means one block takes the whole feature down.
+    # Trying several identities in sequence, falling through to the next
+    # only on a 403, is the resilient version of the same workaround.
+    client_attempts = ["android", "ios", "tv_embedded", "web", "mweb"]
+    last_error = None
+
+    for client in client_attempts:
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": output_path,
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "wav",
+                    "preferredquality": "192",
+                }
+            ],
+            "quiet": True,
+            "extractor_args": {"youtube": {"player_client": [client]}},
+            "retries": 2,
+            "fragment_retries": 2,
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info).replace(".webm", ".wav").replace(".m4a", ".wav")
+            return filename
+        except yt_dlp.utils.DownloadError as e:
+            last_error = e
+            msg = str(e)
+            if "403" in msg or "Forbidden" in msg:
+                # This client identity is blocked right now — try the next one.
+                continue
+            # Any other failure (invalid URL, video unavailable, age/region
+            # restricted, etc.) won't be fixed by switching client identity,
+            # so fail immediately instead of burning time on four more tries.
+            raise
+
+    raise RuntimeError(
+        "YouTube blocked this server's download request across every client identity "
+        "yt-dlp tried (HTTP 403). This is an IP-level block on YouTube's side that is "
+        "currently affecting this server, not a problem with the link — wait a few "
+        "minutes and try again, or upload the video/audio file directly instead."
+    ) from last_error
 
 
 

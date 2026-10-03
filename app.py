@@ -50,13 +50,13 @@ SUGGESTED_QUESTIONS = [
     "Summarise the deployment discussion.",
 ]
 WAITING_MESSAGES = [
-    "Something's cooking \u2014 good results take a moment \U0001f373",
+    "Something's cooking — good results take a moment \U0001f373",
     "Please wait, patience gives fruitful results \U0001f331",
     "Listening closely so nothing gets missed \U0001f3a7",
     "Reading between the lines of your transcript \U0001f4dd",
-    "No, it hasn't frozen \u2014 it's genuinely thinking \U0001f916",
-    "Good things come to those who let the model work \u2728",
-    "Almost there \u2014 stitching the pieces together \U0001f9f5",
+    "No, it hasn't frozen — it's genuinely thinking \U0001f916",
+    "Good things come to those who let the model work ✨",
+    "Almost there — stitching the pieces together \U0001f9f5",
 ]
 PIPELINE_STEPS = [
     ("audio", "Audio processing"),
@@ -73,7 +73,7 @@ PIPELINE_STEPS = [
 def inject_css():
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
     :root {
         --bg: #0c0c0f;
@@ -115,36 +115,10 @@ def inject_css():
         border-radius: 8px !important;
         color: var(--text) !important;
     }
-    /* Outer BaseWeb wrapper = the ONLY thing that draws the border */
-.stTextInput div[data-baseweb="input"],
-.stTextInput div[data-baseweb="base-input"] {
-    background: var(--surface-2) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 8px !important;
-    box-shadow: none !important;
-    outline: none !important;
-}
-
-/* Green outline on focus, drawn once on the wrapper */
-.stTextInput div[data-baseweb="input"]:focus-within,
-.stTextInput div[data-baseweb="base-input"]:focus-within {
-    border: 1px solid var(--accent) !important;
-    box-shadow: none !important;
-}
-
-/* Inner <input> = no border/outline of its own */
-.stTextInput input {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
-    color: var(--text) !important;
-}
-.stTextInput input:focus {
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
-}
+    .stTextInput > div > div > input:focus {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-soft) !important;
+    }
 
     .stButton > button {
         background: var(--surface-2);
@@ -176,8 +150,8 @@ def inject_css():
     hr { border-top: 1px solid var(--border-soft) !important; margin: 1.25rem 0 !important; }
 
     .eyebrow { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent-2); margin-bottom: 0.4rem; }
-    .hero-h1 {font-size: 3.2rem !important; font-weight: 700; line-height: 1.18; color: var(--text); margin: 0 0 0.5rem 0; }
-    .hero-sub { color: var(--text-muted); font-size: 0.95rem; max-width: 34rem; line-height: 1.55; }
+    .hero-h1 { font-size: clamp(2.4rem, 5.6vw, 4rem); font-weight: 800; line-height: 1.12; color: var(--text); margin: 0 0 0.6rem 0; letter-spacing: -0.02em; }
+    .hero-sub { color: var(--text-muted); font-size: 1.05rem; max-width: 36rem; line-height: 1.6; }
 
     .surface-panel { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 1.1rem 1.3rem; }
 
@@ -272,7 +246,7 @@ def inject_css():
     .meta-line { font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; color: var(--text-faint); margin-top: 0.3rem; }
 
     @media (max-width: 640px) {
-        .hero-h1 { font-size: 1.5rem; }
+        .hero-h1 { font-size: 2rem; }
         .surface-panel { padding: 0.9rem; }
         .topbar { flex-wrap: wrap; gap: 0.6rem; }
     }
@@ -321,8 +295,8 @@ class LiveTimer:
             msg = WAITING_MESSAGES[(elapsed // 4) % len(WAITING_MESSAGES)]
             try:
                 self.placeholder.markdown(
-                    f'<div class="wait-line">\u23f1\ufe0f <span class="wait-timer">{format_duration(elapsed) if elapsed >= 60 else f"{elapsed}s"}</span>'
-                    f' &nbsp;\u2014&nbsp; {msg}</div>',
+                    f'<div class="wait-line">⏱️ <span class="wait-timer">{format_duration(elapsed) if elapsed >= 60 else f"{elapsed}s"}</span>'
+                    f' &nbsp;—&nbsp; {msg}</div>',
                     unsafe_allow_html=True,
                 )
             except Exception:
@@ -494,9 +468,10 @@ def render_top_header():
     st.markdown(
         f"""<div class="topbar fade-in">
             <div class="topbar-brand">
-                <div class="topbar-title"></div>
+                <div class="topbar-logo">A</div>
+                <div class="topbar-title">AI Video Assistant</div>
             </div>
-            <a class="topbar-link" href="{GITHUB_URL}" target="_blank"> GitHub</a>
+            <a class="topbar-link" href="{GITHUB_URL}" target="_blank">⬚ GitHub</a>
         </div>""",
         unsafe_allow_html=True,
     )
@@ -528,6 +503,10 @@ def render_input_workspace():
             source_value = st.text_input(
                 "YouTube URL", placeholder="https://youtube.com/watch?v=...", label_visibility="collapsed"
             )
+            st.caption(
+                "If a YouTube link fails with a 403/Forbidden error, YouTube is blocking this "
+                "server's IP — try again in a bit, or use Upload video/audio instead."
+            )
         else:
             uploaded_file = st.file_uploader(
                 "Upload video or audio", type=SUPPORTED_UPLOAD_TYPES, label_visibility="collapsed"
@@ -549,9 +528,29 @@ def render_checklist(step_states: dict, placeholder):
     rows = []
     for key, label in PIPELINE_STEPS:
         state = step_states.get(key, "pending")  # pending | active | done
-        icon = {"done": "\u2713", "active": "\u25ef", "pending": "\u25cb"}[state]
+        icon = {"done": "✓", "active": "◯", "pending": "○"}[state]
         rows.append(f'<div class="pl-row pl-{state}"><span class="pl-icon">{icon}</span><span class="pl-label">{label}</span></div>')
     placeholder.markdown('<div class="fade-in">' + "".join(rows) + "</div>", unsafe_allow_html=True)
+
+
+def friendly_error(e: Exception) -> str:
+    msg = str(e)
+    low = msg.lower()
+    if "403" in msg and ("forbidden" in low or "youtube" in low or "http error 403" in low):
+        return (
+            "YouTube blocked this server's request (HTTP 403 Forbidden). This happens when "
+            "YouTube rate-limits or flags the server's IP address — it isn't something wrong "
+            "with your link or this app's logic. Things that usually help:\n\n"
+            "- Wait a minute and try again (YouTube's block is often temporary)\n"
+            "- Use **Upload video/audio** instead and upload the file directly\n"
+            "- If this keeps happening on a cloud deployment, the hosting provider's IP range "
+            "may be blocked by YouTube more persistently — uploading a file avoids this entirely"
+        )
+    if "sarvam_api_key" in low or ("sarvam" in low and "key" in low):
+        return "Sarvam API key is missing or invalid. Add `SARVAM_API_KEY` to your environment to use the Hinglish option."
+    if "groq_api_key" in low or ("groq" in low and "key" in low):
+        return "Groq API key is missing or invalid. Add `GROQ_API_KEY` to your environment."
+    return f"Something went wrong: {msg}"
 
 
 def run_pipeline(source: str, language: str):
@@ -636,7 +635,7 @@ def run_pipeline(source: str, language: str):
         st.rerun()
 
     except Exception as e:  # noqa: BLE001
-        st.error(f"Something went wrong: {e}")
+        st.error(friendly_error(e))
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -646,11 +645,11 @@ def render_results_header(result: dict):
     col1, col2 = st.columns([3, 2])
     with col1:
         st.markdown('<div class="eyebrow">Session Title</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="hero-h1" style="font-size:1.5rem">{esc(result["title"])}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero-h1" style="font-size:1.7rem">{esc(result["title"])}</div>', unsafe_allow_html=True)
         engine_label = "Whisper" if result.get("language") == "english" else "Sarvam AI"
         lang_label = "English" if result.get("language") == "english" else "Hinglish → English"
         st.markdown(
-            f'<div class="meta-line">{format_duration(result.get("duration_seconds"))} \u00b7 {esc(lang_label)} \u00b7 {esc(engine_label)}</div>',
+            f'<div class="meta-line">{format_duration(result.get("duration_seconds"))} · {esc(lang_label)} · {esc(engine_label)}</div>',
             unsafe_allow_html=True,
         )
     with col2:
@@ -718,7 +717,7 @@ def parse_action_items(text: str):
             rows.append({"task": task, "owner": owner, "deadline": deadline})
             parsed_count += 1
         else:
-            rows.append({"task": clean, "owner": "\u2014", "deadline": "\u2014"})
+            rows.append({"task": clean, "owner": "—", "deadline": "—"})
     if parsed_count < max(1, len(items) // 2):
         return None
     return rows
@@ -792,11 +791,11 @@ def render_transcript_section(result: dict):
         marked = transcript
         if query.strip():
             pattern = re.compile(re.escape(query.strip()), re.IGNORECASE)
-            marked = pattern.sub(lambda m: f"\u2983{m.group(0)}\u2984", transcript)
+            marked = pattern.sub(lambda m: f"⦃{m.group(0)}⦄", transcript)
             match_count = len(pattern.findall(transcript))
-            st.caption(f"{match_count} match{'es' if match_count != 1 else ''} for \u201c{query.strip()}\u201d")
+            st.caption(f"{match_count} match{'es' if match_count != 1 else ''} for “{query.strip()}”")
 
-        safe = esc(marked).replace("\u2983", "<mark>").replace("\u2984", "</mark>")
+        safe = esc(marked).replace("⦃", "<mark>").replace("⦄", "</mark>")
         st.markdown(
             f'<div style="max-height:320px;overflow-y:auto;font-size:0.85rem;line-height:1.7;'
             f'color:var(--text-muted);white-space:pre-wrap;padding-right:0.4rem">{safe}</div>',

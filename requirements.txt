@@ -1,4 +1,7 @@
 # ── Audio / Video ─────────────────────────────────────────────
+# yt-dlp ships frequent releases specifically to keep up with YouTube's
+# anti-bot changes. If YouTube downloads start failing with HTTP 403
+# again, the fastest fix is usually: pip install -U yt-dlp
 yt-dlp>=2024.4.9
 pydub>=0.25.1
 ffmpeg-python>=0.2.0

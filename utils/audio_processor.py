@@ -18,11 +18,31 @@ def download_youtube_audio(url :str) ->str:
             }
         ],
         "quiet": True,
+        # YouTube increasingly returns HTTP 403 for requests from cloud/
+        # datacenter IP ranges (the kind most hosting platforms use) when
+        # yt-dlp identifies itself with its default web-client signature.
+        # Impersonating an Android client and retrying transient failures
+        # is the standard, widely-used yt-dlp workaround for this — it asks
+        # YouTube for a differently-signed stream that isn't gated the same
+        # way, with no change to what gets downloaded.
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "http_headers": {"User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 14)"},
+        "retries": 5,
+        "fragment_retries": 5,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info).replace(".webm", ".wav").replace(".m4a", ".wav")
-    return filename
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info).replace(".webm", ".wav").replace(".m4a", ".wav")
+        return filename
+    except yt_dlp.utils.DownloadError as e:
+        if "403" in str(e) or "Forbidden" in str(e):
+            raise RuntimeError(
+                "YouTube blocked this server's download request (HTTP 403). This is a "
+                "temporary IP-level block on YouTube's side, not a problem with the link — "
+                "wait a bit and try again, or upload the video/audio file directly instead."
+            ) from e
+        raise
 
 
 

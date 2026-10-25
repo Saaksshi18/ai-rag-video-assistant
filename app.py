@@ -335,10 +335,15 @@ def copy_button(text: str, label: str, key: str):
     safe_text = json.dumps(text or "")
     safe_key = re.sub(r"[^a-zA-Z0-9_]", "_", key)
     snippet = f"""
+        <style>
+            :root {{ color-scheme: dark; }}
+            html, body {{ margin:0; padding:0; overflow:hidden; background:transparent; }}
+        </style>
         <button id="{safe_key}" style="
-            font-family: Inter, sans-serif; background:#191a20; color:#eeeeec;
-            border:1px solid #26272e; border-radius:8px; padding:0.4rem 0.9rem;
-            font-size:0.8rem; cursor:pointer;">{esc(label)}</button>
+            width:100%; height:38px; box-sizing:border-box; white-space:nowrap;
+            font-family: 'Source Sans Pro', Inter, sans-serif; background:#191a20; color:#eeeeec;
+            border:1px solid #26272e; border-radius:8px; padding:0 0.9rem;
+            font-size:0.95rem; cursor:pointer;">{esc(label)}</button>
         <script>
         const btn_{safe_key} = document.getElementById('{safe_key}');
         btn_{safe_key}.addEventListener('click', function() {{
@@ -349,9 +354,9 @@ def copy_button(text: str, label: str, key: str):
         </script>
     """
     if hasattr(st, "iframe"):
-        st.iframe(snippet, height=42)
+        st.iframe(snippet, height=40)
     else:
-        components.html(snippet, height=42)
+        components.html(snippet, height=40)
 
 
 def split_numbered_items(text: str) -> list:
@@ -468,10 +473,9 @@ def render_top_header():
     st.markdown(
         f"""<div class="topbar fade-in">
             <div class="topbar-brand">
-                <div class="topbar-logo">A</div>
                 <div class="topbar-title">AI Video Assistant</div>
             </div>
-            <a class="topbar-link" href="{GITHUB_URL}" target="_blank">⬚ GitHub</a>
+            <a class="topbar-link" href="{GITHUB_URL}" target="_blank"> GitHub</a>
         </div>""",
         unsafe_allow_html=True,
     )

@@ -1,106 +1,108 @@
-# 🎬 AI Video Assistant — Meeting Intelligence
+# AI Video Assistant
 
-Turn any YouTube video or local recording into a searchable, chattable knowledge base. Paste a
-link or a file path, and get back a title, a summary, action items, key decisions, open
-questions — and a chat interface grounded in the actual transcript via RAG.
+A Streamlit app that turns a YouTube link or an uploaded recording into a transcript, a summary, structured action items, key decisions and open questions, and a chat interface that answers questions from the transcript using retrieval-augmented generation (RAG).
+
+Live demo: https://ai-rag-video-assistant-khi.streamlit.app/ (free-tier hosting, so it may take a moment to wake up; see [Limitations](#limitations) for what to expect with YouTube links).
 
 ![Input workspace](screenshots/hero-input.png)
 
-## Features
+## Overview
 
-- 🔗 **Two input modes** — a YouTube URL or a local file path
-- 🌐 **Two transcription engines** — English via local **Whisper**, or Hindi/Hinglish → English
-  via **Sarvam AI**'s speech-to-text-translate API
-- 🏷️ **Auto-generated title** and a **map-reduce summary** of the full transcript
-- ✅ **Action items**, **🔑 key decisions**, and **❓ open questions** extracted automatically
-- 💬 **RAG chat** — ask anything about the video; answers are grounded strictly in the transcript,
-  with an explicit "I could not find this information" fallback instead of guessing
-- 📊 **Live pipeline status** in the sidebar (Audio Processing → Transcription → Title Generation →
-  Summarisation → Extraction → RAG Engine)
-- 🖥️ **CLI mode** (`main.py`) for running the whole pipeline from a terminal, including an
-  interactive chat loop
-- 🎨 Fully custom dark "terminal" UI theme built on top of Streamlit
+You give the app a YouTube URL or an audio/video file and choose English or Hinglish. It then:
+
+1. Gets the audio and converts it to WAV.
+2. Transcribes it: English through Whisper, Hinglish (Hindi mixed with English) through Sarvam AI, which returns English text.
+3. Uses an LLM on Groq to write a title, a summary, action items, key decisions and open questions.
+4. Splits the transcript into chunks, embeds them and stores them in ChromaDB, so you can ask questions about the video. Answers are restricted to the retrieved transcript text.
+
+Results can be exported as Markdown or PDF.
 
 ![Results workspace](screenshots/results-workspace.png)
-![Ask your meeting](screenshots/ask-your-meeting.png)
-## Architecture
 
-```
-YouTube URL or local file path
-            │
-            ▼
-   utils/audio_processor.py
-   yt-dlp (YouTube) / pydub (local file) → WAV → chunked into 10-minute pieces
-            │
-            ▼
-     core/transcriber.py
-   English  → Whisper (local model, runs on CPU)
-   Hinglish → Sarvam AI speech-to-text-translate (25s pieces, ≤30s API limit)
-            │
-            ▼
-      Full transcript (plain text)
-            │
-   ┌────────┼─────────────────────────────┐
-   ▼        ▼                             ▼
- Title   Summary                  Action Items / Decisions / Questions
- (Groq)  (map-reduce, Groq)              (Groq, core/extractor.py)
-   │        │                             │
-   └────────┴─────────────────────────────┘
-            │
-            ▼
-      core/vector_store.py
-   Transcript chunked (500 chars) → all-MiniLM-L6-v2 embeddings → ChromaDB
-            │
-            ▼
-       core/rag_engine.py
-   Retriever (top-4 similarity) → Groq LLM → grounded answer
-            │
-            ▼
-        Streamlit chat UI
-```
+## Features
+
+- Input from a YouTube URL or an uploaded file (mp4, mp3, wav, m4a).
+- English transcription, plus Hindi/Hinglish to English through Sarvam AI.
+- Title, map-reduce summary, action items (parsed into a Task / Owner / Due table), key decisions and open questions.
+- Transcript view with search and highlighting, and a `.txt` download.
+- RAG chat with suggested questions. The prompt tells the model to answer only from the retrieved context, and to say "I could not find this information in the meeting transcript." otherwise.
+- Progress checklist with a live elapsed-time counter while the pipeline runs.
+- Export as Markdown or PDF, and copy-to-clipboard buttons for the notes and the transcript.
+- Session history in the sidebar for analyses done since the page was opened.
+- A command-line version (`main.py`) that runs the same pipeline and then starts a terminal chat loop.
+
+![Ask your meeting](screenshots/ask-your-meeting.png)
 
 ## Tech stack
 
-| Layer | Technology |
+| Area | Technology |
 |---|---|
-| UI | Streamlit, with a fully custom dark-mode CSS theme |
-| LLM | [Groq](https://console.groq.com) via `langchain-groq` (`openai/gpt-oss-20b`) — powers title generation, summarization, extraction, and chat |
-| Transcription (English) | Local [Whisper](https://github.com/openai/whisper) (`openai-whisper`) |
-| Transcription (Hinglish → English) | [Sarvam AI](https://www.sarvam.ai/) `speech-to-text-translate` |
-| Embeddings | `sentence-transformers` — `all-MiniLM-L6-v2` (runs locally, no API needed) |
-| Vector store | [ChromaDB](https://www.trychroma.com/), persisted to a local `vector_db/` directory |
-| Audio | `yt-dlp` (YouTube downloads), `pydub`/ffmpeg (format conversion, chunking) |
+| UI | Streamlit with custom CSS |
+| LLM | Groq through `langchain-groq`, model `openai/gpt-oss-20b` (title, summary, extraction, chat) |
+| Transcription, English | Groq-hosted `whisper-large-v3-turbo`, with local `openai-whisper` as a fallback |
+| Transcription, Hinglish | Sarvam AI `speech-to-text-translate` (`saaras:v2.5`) |
+| Embeddings | `all-MiniLM-L6-v2` through `sentence-transformers`, run locally on CPU |
+| Vector store | ChromaDB, persisted in `vector_db/` |
+| Audio | `yt-dlp` for downloads, `pydub` and ffmpeg for conversion and chunking |
 | Orchestration | LangChain (LCEL) |
+| PDF export | `fpdf2` |
+
+## How it works
+
+```
+YouTube URL / uploaded file
+        |
+utils/audio_processor.py     download or convert -> 16 kHz mono WAV -> 10-minute chunks
+        |
+core/transcriber.py          English: Groq Whisper (local Whisper fallback)
+        |                    Hinglish: Sarvam AI, 25-second pieces
+        v
+   full transcript
+        |
+        +-- core/summarizer.py   title, map-reduce summary
+        +-- core/extractor.py    action items, decisions, open questions
+        +-- core/rag_engine.py   chunk -> embed -> Chroma -> retriever -> LLM
+```
+
+**Audio.** For a URL, `yt-dlp` extracts audio and ffmpeg writes it as 16 kHz mono WAV, named by video ID. Uploaded files are converted with `pydub` to the same format. The WAV is then cut into 10-minute chunks.
+
+**Transcription.** Each chunk is transcribed separately and the results are joined into one string. For English, the chunk is sent to Groq's hosted Whisper when `GROQ_API_KEY` is set. If that call fails, or `TRANSCRIBE_ENGINE=local` is set, it uses the local Whisper model (`WHISPER_MODEL`, default `small`). The local model is imported only when needed. Sarvam's synchronous API rejects audio longer than 30 seconds, so for Hinglish each chunk is sliced into 25-second pieces, sent one by one, and the returned English text is concatenated.
+
+**Summary and title.** The transcript is split into 3000-character pieces with 200 characters of overlap. Each piece is summarised on its own (map), then the partial summaries are combined into one bullet-point summary (reduce). The title is generated from the first 2000 characters.
+
+**Extraction.** Three separate LLM calls return action items, key decisions and open questions as numbered lists. The prompts tell the model to skip promotional lines such as "like and subscribe", and to answer in plain text. `app.py` parses each action item into task, owner and deadline for the table, and falls back to "Not specified" when a field is missing.
+
+**Retrieval and chat.** The transcript is split into 500-character chunks with 50 characters of overlap, embedded with `all-MiniLM-L6-v2` and stored in a Chroma collection. A question retrieves the 4 most similar chunks, which are passed to the LLM with the grounding prompt. The embedding model is loaded once per process.
 
 ## Project structure
 
 ```
-ai-rag-video-assistant/
-├── app.py                     # Streamlit UI — main entry point
-├── main.py                    # CLI entry point (runs the pipeline + terminal chat loop)
-├── test.py                    # Quick manual smoke test against a hardcoded YouTube URL
+.
+├── app.py                  Streamlit UI and pipeline orchestration
+├── main.py                 CLI entry point (pipeline plus terminal chat loop)
+├── test.py                 Smoke test against a hardcoded YouTube URL
 ├── core/
-│   ├── transcriber.py         # Whisper (English) + Sarvam AI (Hinglish), both with chunking
-│   ├── summarizer.py          # Title generation + map-reduce summary (Groq)
-│   ├── extractor.py           # Action items / key decisions / open questions (Groq)
-│   ├── rag_engine.py          # Vector store → retriever → Groq → grounded chat answer
-│   └── vector_store.py        # Chroma + all-MiniLM-L6-v2 embeddings
+│   ├── transcriber.py      Groq Whisper / local Whisper / Sarvam, with chunking
+│   ├── summarizer.py       Title and map-reduce summary
+│   ├── extractor.py        Action items, decisions, open questions
+│   ├── rag_engine.py       Retriever + LLM chain for chat
+│   └── vector_store.py     Splitting, embeddings, Chroma
 ├── utils/
-│   └── audio_processor.py     # yt-dlp / pydub — download, convert, chunk into 10-min pieces
+│   └── audio_processor.py  yt-dlp download, WAV conversion, chunking
 ├── requirements.txt
-├── packages.txt                # apt packages for Streamlit Community Cloud (ffmpeg)
-└── .gitignore
+└── packages.txt            apt packages for Streamlit Community Cloud (ffmpeg)
 ```
 
-## Local setup
+## Getting started
 
 ### Prerequisites
 
-- Python 3.10+
-- [FFmpeg](https://ffmpeg.org/download.html) installed and on your `PATH`
-- A [Groq API key](https://console.groq.com/keys) (free tier available)
-- A [Sarvam AI API key](https://www.sarvam.ai/) — **only** if you plan to use the Hinglish
-  transcription option
+- Python 3.10 or newer
+- ffmpeg available on your `PATH`
+- A [Groq API key](https://console.groq.com/keys)
+- A [Sarvam AI API key](https://www.sarvam.ai/), only if you want the Hinglish option
+
+On Python 3.13, `pydub` needs the `audioop-lts` package because `audioop` was removed from the standard library: `pip install audioop-lts`.
 
 ### Install
 
@@ -114,116 +116,92 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Configure environment variables
+`requirements.txt` installs `yt-dlp[default,deno]`. YouTube downloads currently need a JavaScript runtime and the `yt-dlp-ejs` package, which these extras provide.
+
+### Configure
 
 Create a `.env` file in the project root:
 
 ```env
-GROQ_API_KEY=your_groq_api_key_here
-
-# Optional — only needed for the Hinglish (Hindi -> English) language option
-SARVAM_API_KEY=your_sarvam_api_key_here
-
-# Optional overrides (defaults shown)
-WHISPER_MODEL=small
-SARVAM_STT_MODEL=saaras:v2.5
+GROQ_API_KEY=your_groq_key
+SARVAM_API_KEY=your_sarvam_key      # only for Hinglish
 ```
 
-### Run the Streamlit app
+### Run
 
 ```bash
 streamlit run app.py
 ```
 
-Open the URL Streamlit prints (usually http://localhost:8501). Paste a YouTube URL or a local
-file path in the sidebar, pick a language, and click **Analyse**.
-
-### Run from the CLI instead
+or from the terminal:
 
 ```bash
 python main.py
 ```
 
-Prompts for a source and language in the terminal, runs the full pipeline, prints the title,
-summary, and insights, then drops you into an interactive chat loop with the transcript.
+`main.py` asks for a URL or file path and a language, prints the results, then starts a chat loop (`exit` to quit).
 
-### Quick smoke test
+## Usage
 
-```bash
-python test.py
-```
+1. Choose **Paste YouTube URL** or **Upload video/audio**.
+2. Choose English or Hinglish.
+3. Click **Analyse video** and wait for the checklist to finish.
+4. Read the summary and insights, search the transcript, export the report, or ask questions at the bottom of the page.
 
-Runs the pipeline against a hardcoded sample YouTube URL and prints each stage's output — useful
-for confirming your environment (API keys, ffmpeg, model downloads) is set up correctly before
-wiring up the full UI. Edit the `source`/`language` variables at the top of the file to test
-against a different video.
+## Configuration
 
-## Environment variables
-
-| Variable | Required | Description | Default |
+| Variable | Required | Purpose | Default |
 |---|---|---|---|
-| `GROQ_API_KEY` | Yes | Powers title generation, summarization, extraction, and chat | — |
-| `SARVAM_API_KEY` | Only for Hinglish | Powers the Hindi/Hinglish → English transcription option | — |
-| `WHISPER_MODEL` | No | `tiny` / `base` / `small` / `medium` / `large` | `small` |
-| `SARVAM_STT_MODEL` | No | Sarvam speech-to-text-translate model name | `saaras:v2.5` |
+| `GROQ_API_KEY` | Yes | LLM calls and hosted Whisper | none |
+| `SARVAM_API_KEY` | For Hinglish | Hindi/Hinglish to English transcription | none |
+| `WHISPER_MODEL` | No | Local Whisper size (`tiny`, `base`, `small`, ...) used as the fallback | `small` |
+| `GROQ_WHISPER_MODEL` | No | Hosted Whisper model | `whisper-large-v3-turbo` |
+| `TRANSCRIBE_ENGINE` | No | Set to `local` to skip Groq and always use local Whisper | `groq` |
+| `SARVAM_STT_MODEL` | No | Sarvam model name | `saaras:v2.5` |
+| `YT_COOKIES_BROWSER` | No | Read YouTube cookies from a local browser, for example `firefox` | none |
+| `YT_COOKIES_FILE` | No | Path to a Netscape-format `cookies.txt` | none |
+| `YT_COOKIES_B64` | No | Base64 of a `cookies.txt`, for hosted deployments | none |
 
 ## Deploying to Streamlit Community Cloud
 
-1. Push this repo to GitHub (already done ✅).
-2. Go to [share.streamlit.io](https://share.streamlit.io) → **New app** → point it at this repo,
-   branch `main`, main file `app.py`.
-3. `packages.txt` (already included) tells Streamlit Cloud to install `ffmpeg` automatically.
-4. In **Settings → Secrets**, add:
+1. Create the app from this repository with `app.py` as the main file. `packages.txt` installs ffmpeg.
+2. Add secrets under Settings, Secrets. Top-level secrets are exposed to the app as environment variables:
    ```toml
    GROQ_API_KEY = "..."
    SARVAM_API_KEY = "..."
+   YT_COOKIES_B64 = "..."      # optional, see below
    ```
-5. Deploy.
+3. Free-tier memory is limited. If the app is restricted for using too much memory, set `WHISPER_MODEL = "base"` or `"tiny"` for the local fallback.
 
-## How the pipeline works
+## Implementation details
 
-1. **Audio acquisition** (`utils/audio_processor.py`) — YouTube links are downloaded with
-   `yt-dlp`; local files are converted to mono 16kHz WAV with `pydub`. Either way, the audio is
-   then split into 10-minute chunks before transcription.
-2. **Transcription** (`core/transcriber.py`) — each chunk is routed to Whisper (English) or
-   sliced further into 25-second pieces and sent to Sarvam AI (Hinglish → English), then all
-   chunks are joined into one flat transcript string.
-3. **Title & summary** (`core/summarizer.py`) — the transcript is split into ~3000-character
-   pieces, each summarized individually (map step), then combined into one final bullet-point
-   summary (reduce step) via Groq. A separate call generates a short title from the first 2000
-   characters.
-4. **Extraction** (`core/extractor.py`) — three separate Groq calls extract action items (with
-   task/owner/deadline), key decisions, and open questions from the full transcript.
-5. **Indexing** (`core/vector_store.py`) — the transcript is split into 500-character chunks,
-   embedded with `all-MiniLM-L6-v2`, and stored in a persistent Chroma collection
-   (`vector_db/`, collection name `meeting_transcript`).
-6. **Chat** (`core/rag_engine.py`) — a question is embedded, the top-4 most similar chunks are
-   retrieved, and Groq answers strictly from that context — explicitly saying "I could not find
-   this information in the meeting transcript" rather than guessing when the answer isn't there.
+**YouTube downloads.** YouTube blocks or challenges many requests from cloud IP addresses, and the workarounds change often. `download_youtube_audio` handles this in layers:
 
-## Known limitations
+- It detects an installed JavaScript runtime (Deno, Node or Bun) and passes it to yt-dlp.
+- It tries yt-dlp's default clients first, then falls back through the `tv`, `mweb`, `web_embedded`, `android`, `ios` and `web` clients. It moves to the next client only on errors that look like a block or challenge (403, "sign in to confirm you're not a bot", missing formats, 429). Errors such as an unavailable video are raised immediately.
+- It can attach cookies from a browser, a file or a base64 string, which is the most reliable option for the "not a bot" check.
+- If every attempt fails, the error message says which piece is missing: JavaScript runtime, cookies, or an outdated yt-dlp.
 
-- **No timestamps.** The transcript is stored and displayed as one flat string; there's no
-  per-segment timing, so there's no clickable "jump to this moment" feature and no video player
-  in the UI.
-- **Shared vector store across videos.** `build_vector_store()` always writes to the same
-  persistent Chroma collection (`vector_db/`, `meeting_transcript`). Analyzing a second video in
-  the same environment adds its chunks to the same collection rather than replacing them, so RAG
-  answers could draw on a previous video's transcript too. Delete the `vector_db/` folder between
-  videos if you want a clean slate.
-- **Session-only results.** Everything shown in the Streamlit UI lives in `st.session_state` —
-  refreshing the browser clears the title/summary/insights/chat and requires re-running Analyse.
-- **CPU-bound transcription.** Whisper runs locally with no GPU acceleration configured; larger
-  model sizes or longer videos will take proportionally longer, especially on free-tier hosting.
-- **`downloades/` and `vector_db/` grow over time.** Downloaded audio and the vector index persist
-  on disk indefinitely (both are gitignored, but not auto-cleaned).
+Uploading a file bypasses YouTube completely and is the dependable path on hosted deployments.
+
+**Transcription fallback.** `transcribe_chunk` tries Groq first and catches any exception from that call before falling back to local Whisper, so a rate limit or network error does not fail the whole analysis. A 429 response is retried once after the `retry-after` delay. Chunks above about 24 MB are re-encoded to 16 kHz mono before upload to stay under Groq's file size limit.
+
+**Live progress.** The pipeline runs inside `st.status`. A background thread, attached to Streamlit's script context, updates the elapsed time and a rotating message every second, so a long analysis does not look stalled. The thread is stopped in a `finally` block.
+
+## Limitations
+
+- **YouTube on hosted deployments.** Streamlit Cloud IPs are often blocked by YouTube. Cookies help, but a download can still fail, and cookies expire. File upload always works.
+- **No timestamps or speakers.** The transcript is one flat string. Chat answers do not cite a source passage or time.
+- **One shared vector collection.** `build_vector_store` writes to the same persistent collection (`meeting_transcript` in `vector_db/`) for every video, so chunks from earlier videos stay in the index and can appear in later answers. Delete `vector_db/` to start clean.
+- **Session-only results.** Results, chat and history live in `st.session_state` and are lost on refresh.
+- **Free-tier limits.** Groq's free tier has rate and daily limits. If hosted Whisper fails, the local Whisper fallback is slow on a shared CPU and can exceed Streamlit Cloud's memory limit.
+- **Long videos.** Processing time grows with length, because each 10-minute chunk is transcribed in turn and the summary makes one LLM call per 3000 characters.
+- **Disk growth.** `downloades/` and `vector_db/` are gitignored but never cleaned up.
 
 ## Future improvements
 
-- Real timestamps carried from transcription through to chat citations, with click-to-seek and an
-  embedded video player
-- Per-video (rather than shared) vector collections
-- Persistent history across sessions (currently in-memory only)
-- Streaming chat responses
-- PDF/export of the summary and insights (`reportlab`/`fpdf2` are already in `requirements.txt`
-  for this, not yet wired up)
+- Carry timestamps from transcription through to chat answers, with source citations.
+- Use one vector collection per video.
+- Persist history across sessions.
+- Stream chat responses.
+- Speaker labels.

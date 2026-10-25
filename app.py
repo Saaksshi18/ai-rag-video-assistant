@@ -242,6 +242,8 @@ def inject_css():
     .bullet-list li:last-child { border-bottom: none; }
     .bullet-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 0.4rem; flex-shrink: 0; }
     .bullet-dot.amber { background: var(--warning); }
+    .out-table strong, .bullet-list strong { color: var(--text); font-weight: 600; }
+    .bullet-list code, .out-table code { background: var(--surface-3); padding: 0 4px; border-radius: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; }
 
     .meta-line { font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; color: var(--text-faint); margin-top: 0.3rem; }
 
@@ -540,6 +542,12 @@ def render_checklist(step_states: dict, placeholder):
 def friendly_error(e: Exception) -> str:
     msg = str(e)
     low = msg.lower()
+    if "sign in to confirm" in low or "not a bot" in low:
+        return (
+            "YouTube is asking this server to prove it isn't a bot, so the download was blocked. "
+            "This is common for cloud-hosted apps. Use **Upload video/audio** instead, "
+            "which always works."
+        )
     if "403" in msg and ("forbidden" in low or "youtube" in low or "http error 403" in low):
         return (
             "YouTube blocked this server's request (HTTP 403 Forbidden). This happens when "
@@ -650,12 +658,6 @@ def render_results_header(result: dict):
     with col1:
         st.markdown('<div class="eyebrow">Session Title</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="hero-h1" style="font-size:1.7rem">{esc(result["title"])}</div>', unsafe_allow_html=True)
-        engine_label = "Whisper" if result.get("language") == "english" else "Sarvam AI"
-        lang_label = "English" if result.get("language") == "english" else "Hinglish → English"
-        st.markdown(
-            f'<div class="meta-line">{format_duration(result.get("duration_seconds"))} · {esc(lang_label)} · {esc(engine_label)}</div>',
-            unsafe_allow_html=True,
-        )
     with col2:
         b1, b2, b3, b4 = st.columns(4)
         with b1:
@@ -687,43 +689,33 @@ def render_results_header(result: dict):
 
 def render_summary_section(result: dict):
     st.markdown('<div class="section-label">Executive Summary</div>', unsafe_allow_html=True)
-    body = esc(result.get("summary", "")).replace("\n", "<br>")
-    st.markdown(f'<div class="surface-panel fade-in"><div class="divider-item-body">{body}</div></div>', unsafe_allow_html=True)
+    summary = result.get("summary", "") or ""
+    # Scroll inside the card only when it is long, so it lines up with the transcript.
+    with st.container(border=True, height=480 if len(summary) > 1400 else None):
+        st.markdown(summary)
     st.write("")
 
 
-ACTION_ITEM_PATTERN = re.compile(
-    r"task\s*[:\-]\s*(.+?)(?=\n\s*owner\s*[:\-]|\n\s*deadline\s*[:\-]|$)"
-    r"(?:\n\s*owner\s*[:\-]\s*(.+?))?(?=\n\s*deadline\s*[:\-]|$)"
-    r"(?:\n\s*deadline\s*[:\-]\s*(.+?))?$",
-    re.IGNORECASE | re.DOTALL,
-)
+FIELD_SPLIT = re.compile(r"\b(owner|deadline)\s*[:\-]\s*", re.IGNORECASE)
 
 
 def parse_action_items(text: str):
-    """Best-effort parse of 'Task / Owner / Deadline' items (the shape
-    core/extractor.py's prompt already asks for) into structured rows for a
-    real table. Returns None if fewer than half the items parse cleanly, so
-    the caller can fall back to the plain text rendering instead of showing
-    a half-empty, unconvincing table."""
+    """Parse 'Task ... Owner ... Deadline ...' items into table rows. Handles the
+    fields on separate lines or inline, with or without markdown bold."""
     items = split_numbered_items(text)
     if not items or items[0].lower().startswith("no action items"):
         return []
     rows = []
-    parsed_count = 0
     for item in items:
-        clean = re.sub(r"^\s*\d+[\.\)]\s*", "", item).strip()
-        m = ACTION_ITEM_PATTERN.search(clean)
-        if m and m.group(1):
-            task = m.group(1).strip().rstrip(".")
-            owner = (m.group(2) or "Not specified").strip().rstrip(".")
-            deadline = (m.group(3) or "Not specified").strip().rstrip(".")
-            rows.append({"task": task, "owner": owner, "deadline": deadline})
-            parsed_count += 1
-        else:
-            rows.append({"task": clean, "owner": "—", "deadline": "—"})
-    if parsed_count < max(1, len(items) // 2):
-        return None
+        clean = re.sub(r"^\s*\d+[\.\)]\s*", "", item)
+        clean = clean.replace("**", "").replace("`", "")
+        clean = re.sub(r"^[\s\-\*\u2022]*(task\s*[:\-]\s*)?", "", clean, flags=re.I)
+        parts = FIELD_SPLIT.split(clean)
+        fields = {"owner": "Not specified", "deadline": "Not specified"}
+        for i in range(1, len(parts) - 1, 2):
+            fields[parts[i].lower()] = parts[i + 1].strip(" .\n") or "Not specified"
+        rows.append({"task": parts[0].strip(" .\n-"),
+                     "owner": fields["owner"], "deadline": fields["deadline"]})
     return rows
 
 
@@ -753,29 +745,49 @@ def render_action_items_table(text: str):
     )
 
 
-def render_bullet_list(text: str, empty_label: str, dot_class: str = ""):
+def inline_md(text: str) -> str:
+    """Escape, then turn the **bold** and `code` the LLM writes into real tags."""
+    s = esc(text)
+    s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+    return re.sub(r"`(.+?)`", r"<code>\1</code>", s)
+
+
+def strip_number(t: str) -> str:
+    return re.sub(r"^\s*\d+[.)]\s*", "", t)
+
+
+def list_items(text: str) -> list:
     items = split_numbered_items(text)
+    # drop a leading un-numbered header line like "**Key decisions made...**"
+    if len(items) > 1 and not re.match(r"\s*\d+[.)]", items[0]):
+        items = items[1:]
+    return items
+
+
+def render_bullet_list(text: str, empty_label: str, dot_class: str = ""):
+    items = list_items(text)
     if not items or items[0].lower().startswith(empty_label.lower().split(" found")[0]):
         st.markdown(f'<span style="color:var(--text-faint);font-size:0.85rem">{esc(empty_label)}</span>', unsafe_allow_html=True)
         return
     lis = "".join(
-        f'<li><span class="bullet-dot {dot_class}"></span><span>{esc(re.sub(r"^\\s*\\d+[.)]\\s*", "", i))}</span></li>'
+        f'<li><span class="bullet-dot {dot_class}"></span><span>{inline_md(strip_number(i))}</span></li>'
         for i in items
     )
     st.markdown(f'<ul class="bullet-list fade-in">{lis}</ul>', unsafe_allow_html=True)
 
 
 def render_insights_section(result: dict):
+    label_style = "font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:0.4rem"
     st.markdown('<div class="section-label">Key Insights</div>', unsafe_allow_html=True)
-    col_left, col_right = st.columns([3, 2], gap="medium")
-    with col_left:
-        st.markdown('<div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:0.4rem">Action Items</div>', unsafe_allow_html=True)
-        render_action_items_table(result.get("action_items", ""))
-    with col_right:
-        st.markdown('<div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:0.4rem">Key Decisions</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="{label_style}">Action Items</div>', unsafe_allow_html=True)
+    render_action_items_table(result.get("action_items", ""))
+    st.write("")
+    c1, c2 = st.columns(2, gap="medium")
+    with c1:
+        st.markdown(f'<div style="{label_style}">Key Decisions</div>', unsafe_allow_html=True)
         render_bullet_list(result.get("key_decisions", ""), "No key decisions found.")
-        st.write("")
-        st.markdown('<div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:0.4rem">Open Questions</div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'<div style="{label_style}">Open Questions</div>', unsafe_allow_html=True)
         render_bullet_list(result.get("open_questions", ""), "No open questions found.", dot_class="amber")
     st.write("")
 
@@ -801,17 +813,12 @@ def render_transcript_section(result: dict):
 
         safe = esc(marked).replace("⦃", "<mark>").replace("⦄", "</mark>")
         st.markdown(
-            f'<div style="max-height:320px;overflow-y:auto;font-size:0.85rem;line-height:1.7;'
+            f'<div style="max-height:340px;overflow-y:auto;font-size:0.85rem;line-height:1.7;'
             f'color:var(--text-muted);white-space:pre-wrap;padding-right:0.4rem">{safe}</div>',
             unsafe_allow_html=True,
         )
         st.write("")
         copy_button(transcript, "Copy transcript", key="copy_transcript")
-        st.caption(
-            "Speaker labels and clickable timestamps aren't available yet — the current "
-            "transcription pipeline produces one continuous transcript with no per-segment "
-            "timing or diarization."
-        )
     st.write("")
 
 
@@ -877,12 +884,12 @@ render_top_header()
 if st.session_state.result:
     _result = st.session_state.result
     render_results_header(_result)
-    left, right = st.columns([3, 2], gap="large")
-    with left:
+    top_left, top_right = st.columns([3, 2], gap="large")
+    with top_left:
         render_summary_section(_result)
-        render_insights_section(_result)
-    with right:
+    with top_right:
         render_transcript_section(_result)
+    render_insights_section(_result)
     st.markdown("---")
     render_chat_section(_result)
 else:

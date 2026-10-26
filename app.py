@@ -420,7 +420,7 @@ def build_pdf_bytes(result: dict) -> bytes:
         pdf.set_font("Helvetica", "B", 12)
         pdf.multi_cell(0, 7, heading, new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 5.5, _pdf_safe(body) or "—", new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, 5.5, _pdf_safe(body or "-"), new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
 
 
@@ -691,7 +691,15 @@ def render_summary_section(result: dict):
     st.markdown('<div class="section-label">Executive Summary</div>', unsafe_allow_html=True)
     summary = result.get("summary", "") or ""
     # Scroll inside the card only when it is long, so it lines up with the transcript.
-    with st.container(border=True, height=480 if len(summary) > 1400 else None):
+    try:
+        if len(summary) > 1400:
+            box = st.container(border=True, height=480)
+        else:
+            box = st.container(border=True)
+    except Exception:
+        # Fixed-height containers are not supported on every Streamlit version.
+        box = st.container(border=True)
+    with box:
         st.markdown(summary)
     st.write("")
 

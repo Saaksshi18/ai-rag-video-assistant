@@ -1,4 +1,4 @@
-#from langchain_groq import ChatGroq
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -7,14 +7,11 @@ from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 
 import os 
 
-from langchain_mistralai import ChatMistralAI
-
 def get_llm():
-    return ChatMistralAI(
-        model="mistral-small-2506",
-        api_key=os.getenv("MISTRAL_API_KEY"),
-        temperature=0.2,
-        max_retries=6,
+    return ChatGroq(
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        groq_api_key=os.getenv("GROQ_API_KEY"),
+        temperature=0.3
     )
 
 

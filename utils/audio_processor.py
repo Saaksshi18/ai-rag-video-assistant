@@ -73,7 +73,14 @@ def _resolve_cookie_options() -> dict:
     b64_contents = os.environ.get("YT_COOKIES_B64")
     if b64_contents:
         try:
-            decoded = base64.b64decode(b64_contents)
+            # Tolerate output from `certutil -encode` (BEGIN/END header lines)
+            # and any stray whitespace/newlines pasted into the secret.
+            cleaned = "".join(
+                line.strip()
+                for line in b64_contents.splitlines()
+                if not line.startswith("-----")
+            )
+            decoded = base64.b64decode(cleaned)
             tmp = tempfile.NamedTemporaryFile(
                 delete=False, suffix="_yt_cookies.txt", mode="wb"
             )

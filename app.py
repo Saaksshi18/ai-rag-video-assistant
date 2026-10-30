@@ -1,5 +1,5 @@
 """
-Streamlit frontend for the AI Video Assistant.
+Framewise — Streamlit frontend for the AI Video Assistant.
 
 FRONTEND-ONLY REDESIGN. The backend is untouched: the pipeline calls
 process_input -> transcribe_all -> generate_title -> summarize ->
@@ -86,7 +86,9 @@ CSS = """
 
 html, body, .stApp, [class*="css"] { font-family:"DM Sans", sans-serif; }
 .stApp { background:var(--bg); color:var(--text); }
-#MainMenu, footer, [data-testid="stDecoration"], [data-testid="stToolbar"] { display:none !important; }
+#MainMenu, footer, [data-testid="stDecoration"], [data-testid="stAppDeployButton"], [data-testid="stMainMenu"], [data-testid="stStatusWidget"] { display:none !important; }
+[data-testid="stToolbar"] { background:transparent; }
+[data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"], [data-testid="stSidebarCollapseButton"] { display:flex !important; visibility:visible !important; color:var(--text-2) !important; }
 [data-testid="stHeader"] { background:transparent; height:2.2rem; }
 .block-container { max-width:1280px; padding:0.6rem 2.2rem 4rem; }
 ::selection { background:rgba(134,129,220,.3); }

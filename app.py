@@ -730,7 +730,7 @@ def render_sidebar():
     with st.sidebar:
         st.markdown(
             H(f'<div class="logo"><span class="logo-mark"><span></span><span></span><span></span></span>'
-              f'<span class="logo-name"></span></div>'),
+              f'<span class="logo-name">{BRAND}</span></div>'),
             unsafe_allow_html=True,
         )
         nav_button("＋  New analysis", "nav_new", "new", page == "new")

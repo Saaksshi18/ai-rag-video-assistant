@@ -32,13 +32,14 @@ langchain-chroma>=0.1.0
 langchain-text-splitters>=0.2.0
 
 # ── Streamlit ────────────────────────────────────────────────
-streamlit>=1.35.0
+streamlit>=1.40.0
 streamlit-extras>=0.4.0
 watchdog>=4.0.0
 
 # ── PDF / Export ─────────────────────────────────────────────
 reportlab>=4.2.0
 fpdf2>=2.7.9
+python-docx>=1.1.0
 
 # ── Utilities ────────────────────────────────────────────────
 python-dotenv>=1.0.0

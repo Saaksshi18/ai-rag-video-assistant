@@ -35,6 +35,8 @@ Results can be exported as Markdown or PDF.
 
 ![Ask your meeting - updated UI](screenshots/ask-your-meeting2.png)
 
+![Ask your meeting - updated UI 2.0](screenshots/ask-your-meeting3.png)
+
 ## Tech stack
 
 | Area | Technology |

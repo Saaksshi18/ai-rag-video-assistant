@@ -1,55 +1,53 @@
 # AI Video Assistant
 
-A Streamlit app that turns a YouTube link or an uploaded recording into a transcript, a summary, structured action items, key decisions and open questions, and a chat interface that answers questions from the transcript using retrieval-augmented generation (RAG).
+A Streamlit app that turns a YouTube link or an uploaded recording into a transcript, a summary, structured action items, key decisions and open questions, plus a chat that answers questions from the transcript using retrieval-augmented generation (RAG).
 
-Live demo: https://ai-rag-video-assistant-khi.streamlit.app/ (free-tier hosting, so it may take a moment to wake up; see [Limitations](#limitations) for what to expect with YouTube links).
+**Live demo:** https://ai-rag-video-assistant-khi.streamlit.app/ (free-tier hosting, so it may take a moment to wake up; see [Limitations](#limitations) for what to expect with YouTube links).
 
-![Input workspace](screenshots/hero-input.png)
+![New analysis page](screenshots/hero-input.png)
 
 ## Overview
 
-You give the app a YouTube URL or an audio/video file and choose English or Hinglish. It then:
+You give the app a video URL or an audio/video file and choose English or Hinglish. It then:
 
-1. Gets the audio and converts it to WAV.
+1. Gets the audio and converts it to 16 kHz mono WAV.
 2. Transcribes it: English through Whisper, Hinglish (Hindi mixed with English) through Sarvam AI, which returns English text.
 3. Uses an LLM on Groq to write a title, a summary, action items, key decisions and open questions.
-4. Splits the transcript into chunks, embeds them and stores them in ChromaDB, so you can ask questions about the video. Answers are restricted to the retrieved transcript text.
+4. Splits the transcript into chunks, embeds them and stores them in ChromaDB, so you can ask questions about the video. The chat prompt restricts answers to the retrieved transcript passages.
 
-Results can be exported as Markdown or PDF.
+Results can be exported as a Word document (.docx), a PDF or a plain-text transcript.
 
-![Results workspace](screenshots/results-workspace.png)
+![Analysis page](screenshots/results-workspace.png)
 
 ## Features
 
-- Input from a YouTube URL or an uploaded file (mp4, mp3, wav, m4a).
-- English transcription, plus Hindi/Hinglish to English through Sarvam AI.
-- Title, map-reduce summary, action items (parsed into a Task / Owner / Due table), key decisions and open questions.
-- Transcript view with search and highlighting, and a `.txt` download.
-- RAG chat with suggested questions. The prompt tells the model to answer only from the retrieved context, and to say "I could not find this information in the meeting transcript." otherwise.
-- Progress checklist with a live elapsed-time counter while the pipeline runs.
-- Export as Markdown or PDF, and copy-to-clipboard buttons for the notes and the transcript.
-- Session history in the sidebar for analyses done since the page was opened.
-- A command-line version (`main.py`) that runs the same pipeline and then starts a terminal chat loop.
+- **Input:** a YouTube/video URL or an uploaded file (mp4, mp3, wav, m4a).
+- **Transcription:** English through Whisper; Hindi/Hinglish to English through Sarvam AI.
+- **Analysis:** title, map-reduce summary, action items (parsed into task, owner and due date), key decisions and open questions.
+- **Transcript:** grouped into numbered passages, with search and highlighting, a `.txt` download and a copy button.
+- **RAG chat:** suggested questions and a chat panel that stays in view while you scroll. The prompt tells the model to answer only from the retrieved context and to say "I could not find this information in the meeting transcript." otherwise.
+- **Progress:** a numbered step timeline with a live elapsed-time counter while the pipeline runs.
+- **Export:** Word (.docx), PDF and `.txt`, plus a copy-to-clipboard button for the meeting notes.
+- **Workspace pages:** a sidebar with New analysis, Recent analyses, a Saved & history page (this session only) and a Settings page showing which API keys and cookies are configured.
+- **CLI:** `main.py` runs the same pipeline from the terminal and then starts a chat loop.
 
-![Ask your meeting](screenshots/ask-your-meeting.png)
-
-![Ask your meeting - updated UI](screenshots/ask-your-meeting2.png)
-
-![Ask your meeting - updated UI 2.0](screenshots/ask-your-meeting3.png)
+![Ask your video](screenshots/ask-your-meeting.png)
+![Ask your video2](screenshots/ask-your-meeting3.png)
+![Ask your video3](screenshots/ask-your-meeting2.png)
 
 ## Tech stack
 
 | Area | Technology |
 |---|---|
-| UI | Streamlit with custom CSS |
-| LLM | Groq through `langchain-groq`, model `openai/gpt-oss-20b` (title, summary, extraction, chat) |
+| UI | Streamlit with custom CSS (dark theme, DM Sans / Manrope) |
+| LLM | Groq through `langchain-groq` (gpt-oss models; the model name is set in each `core/` module's `get_llm()`) |
 | Transcription, English | Groq-hosted `whisper-large-v3-turbo`, with local `openai-whisper` as a fallback |
-| Transcription, Hinglish | Sarvam AI `speech-to-text-translate` (`saaras:v2.5`) |
+| Transcription, Hinglish | Sarvam AI speech-to-text-translate (`saaras:v2.5`) |
 | Embeddings | `all-MiniLM-L6-v2` through `sentence-transformers`, run locally on CPU |
 | Vector store | ChromaDB, persisted in `vector_db/` |
 | Audio | `yt-dlp` for downloads, `pydub` and ffmpeg for conversion and chunking |
 | Orchestration | LangChain (LCEL) |
-| PDF export | `fpdf2` |
+| Export | `python-docx` (Word), `fpdf2` (PDF) |
 
 ## How it works
 
@@ -70,11 +68,11 @@ core/transcriber.py          English: Groq Whisper (local Whisper fallback)
 
 **Audio.** For a URL, `yt-dlp` extracts audio and ffmpeg writes it as 16 kHz mono WAV, named by video ID. Uploaded files are converted with `pydub` to the same format. The WAV is then cut into 10-minute chunks.
 
-**Transcription.** Each chunk is transcribed separately and the results are joined into one string. For English, the chunk is sent to Groq's hosted Whisper when `GROQ_API_KEY` is set. If that call fails, or `TRANSCRIBE_ENGINE=local` is set, it uses the local Whisper model (`WHISPER_MODEL`, default `small`). The local model is imported only when needed. Sarvam's synchronous API rejects audio longer than 30 seconds, so for Hinglish each chunk is sliced into 25-second pieces, sent one by one, and the returned English text is concatenated.
+**Transcription.** Each chunk is transcribed separately and the results are joined into one string. For English, the chunk goes to Groq's hosted Whisper when `GROQ_API_KEY` is set. If that call fails, or `TRANSCRIBE_ENGINE=local` is set, the local Whisper model is used (`WHISPER_MODEL`, default `small`), imported only when needed. Sarvam's synchronous API rejects audio longer than 30 seconds, so for Hinglish each chunk is cut into 25-second pieces, sent one by one, and the returned English text is joined.
 
-**Summary and title.** The transcript is split into 3000-character pieces with 200 characters of overlap. Each piece is summarised on its own (map), then the partial summaries are combined into one bullet-point summary (reduce). The title is generated from the first 2000 characters.
+**Summary and title.** The transcript is split into 3000-character pieces with 200 characters of overlap. Each piece is summarised on its own (map), then the partial summaries are combined into one bullet-point summary (reduce). The title comes from the first 2000 characters.
 
-**Extraction.** Three separate LLM calls return action items, key decisions and open questions as numbered lists. The prompts tell the model to skip promotional lines such as "like and subscribe", and to answer in plain text. `app.py` parses each action item into task, owner and deadline for the table, and falls back to "Not specified" when a field is missing.
+**Extraction.** Three separate LLM calls return action items, key decisions and open questions as numbered lists. The prompts tell the model to skip promotional lines such as "like and subscribe" and to answer in plain text. If the model returns an empty answer, the call is retried and then falls back to a "none found" sentence. `app.py` parses each action item into task, owner and deadline, and falls back to "Not specified" when a field is missing.
 
 **Retrieval and chat.** The transcript is split into 500-character chunks with 50 characters of overlap, embedded with `all-MiniLM-L6-v2` and stored in a Chroma collection. A question retrieves the 4 most similar chunks, which are passed to the LLM with the grounding prompt. The embedding model is loaded once per process.
 
@@ -120,7 +118,7 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-`requirements.txt` installs `yt-dlp[default,deno]`. YouTube downloads currently need a JavaScript runtime and the `yt-dlp-ejs` package, which these extras provide.
+`requirements.txt` installs `yt-dlp[default,deno]`. YouTube downloads currently need a JavaScript runtime and the `yt-dlp-ejs` package, which these extras provide. The UI needs Streamlit 1.40 or newer, and Word export needs `python-docx`; both are in the file.
 
 ### Configure
 
@@ -147,10 +145,11 @@ python main.py
 
 ## Usage
 
-1. Choose **Paste YouTube URL** or **Upload video/audio**.
+1. Choose **Paste video URL** or **Upload video or audio**.
 2. Choose English or Hinglish.
-3. Click **Analyse video** and wait for the checklist to finish.
-4. Read the summary and insights, search the transcript, export the report, or ask questions at the bottom of the page.
+3. Click **Analyse video** and follow the step timeline until it finishes.
+4. Read the summary and insights, search the transcript, ask questions in the chat panel, or open **Export** for Word, PDF, `.txt` or copied notes.
+5. Reopen earlier analyses from **Recent** or **Saved & history** in the sidebar.
 
 ## Configuration
 
@@ -173,9 +172,10 @@ python main.py
    ```toml
    GROQ_API_KEY = "..."
    SARVAM_API_KEY = "..."
-   YT_COOKIES_B64 = "..."      # optional, see below
+   YT_COOKIES_B64 = "..."      # optional
    ```
 3. Free-tier memory is limited. If the app is restricted for using too much memory, set `WHISPER_MODEL = "base"` or `"tiny"` for the local fallback.
+4. After pushing changes to `core/` modules, use **Reboot app** so the new code is loaded.
 
 ## Implementation details
 
@@ -190,15 +190,18 @@ Uploading a file bypasses YouTube completely and is the dependable path on hoste
 
 **Transcription fallback.** `transcribe_chunk` tries Groq first and catches any exception from that call before falling back to local Whisper, so a rate limit or network error does not fail the whole analysis. A 429 response is retried once after the `retry-after` delay. Chunks above about 24 MB are re-encoded to 16 kHz mono before upload to stay under Groq's file size limit.
 
-**Live progress.** The pipeline runs inside `st.status`. A background thread, attached to Streamlit's script context, updates the elapsed time and a rotating message every second, so a long analysis does not look stalled. The thread is stopped in a `finally` block.
+**Live progress.** Starting an analysis switches to a processing page that shows a numbered step timeline and a progress bar. A background thread, attached to Streamlit's script context, updates the elapsed time and a rotating message every second, so a long analysis does not look stalled. The thread is stopped in a `finally` block, and any error returns you to the input page with a readable message.
+
+**Exports.** The Word file contains the title, the summary (bullets and bold preserved), an action-items table, numbered decisions and questions, and the transcript as an appendix. The PDF uses a built-in font, so characters outside Latin-1 are replaced with `?`.
 
 ## Limitations
 
 - **YouTube on hosted deployments.** Streamlit Cloud IPs are often blocked by YouTube. Cookies help, but a download can still fail, and cookies expire. File upload always works.
-- **No timestamps or speakers.** The transcript is one flat string. Chat answers do not cite a source passage or time.
+- **No timestamps or speakers.** The transcript is one flat string, shown as numbered passages. Chat answers do not cite a source passage or time.
 - **One shared vector collection.** `build_vector_store` writes to the same persistent collection (`meeting_transcript` in `vector_db/`) for every video, so chunks from earlier videos stay in the index and can appear in later answers. Delete `vector_db/` to start clean.
 - **Session-only results.** Results, chat and history live in `st.session_state` and are lost on refresh.
-- **Free-tier limits.** Groq's free tier has rate and daily limits. If hosted Whisper fails, the local Whisper fallback is slow on a shared CPU and can exceed Streamlit Cloud's memory limit.
+- **Free-tier limits.** Groq's free tier has per-minute and daily token limits, so long videos can hit a 429 error. If hosted Whisper fails, the local Whisper fallback is slow on a shared CPU and can exceed Streamlit Cloud's memory limit.
+- **PDF characters.** The PDF export replaces non-Latin text with `?`. Use the Word export for Hindi or other scripts.
 - **Long videos.** Processing time grows with length, because each 10-minute chunk is transcribed in turn and the summary makes one LLM call per 3000 characters.
 - **Disk growth.** `downloades/` and `vector_db/` are gitignored but never cleaned up.
 
@@ -209,3 +212,4 @@ Uploading a file bypasses YouTube completely and is the dependable path on hoste
 - Persist history across sessions.
 - Stream chat responses.
 - Speaker labels.
+- Retry or back off on Groq rate limits.
